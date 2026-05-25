@@ -135,7 +135,8 @@ const player = {
     damage:15,
     fireRate:320,
     bullets:[],
-    level:1
+    level:1,
+    vampireKills: 0 
 };
 
 const abilities = {
@@ -146,17 +147,17 @@ const abilities = {
     pizza:null,
     darkEnergy:null,
     guards:null,
-    vampiric:null,      // New
-    frostNova:null,     // New
-    chainLightning:null,// New
-    singularity:null    // New
+    vampiric:null,      
+    frostNova:null,     
+    chainLightning:null,
+    singularity:null    
 };
 
 let enemies = [];
 let guards = []; 
 let particles = [];
 let damageTexts = [];
-let singularities = []; // Track active black holes
+let singularities = []; 
 let round = 1;
 let paused = false;
 
@@ -170,13 +171,21 @@ class Enemy{
         this.hp = 35 + round*8;
         this.color = `hsl(${Math.random()*360},80%,60%)`;
         this.flash = 0;
-        
-        // New mechanics states
         this.frozenTimer = 0;
     }
 
     update(){
-        // If frozen by Frost Nova, stall movement
+        // FIXED: Singularity pull happens BEFORE the freeze return check so frozen enemies still get sucked in
+        singularities.forEach(s => {
+            let sDist = Math.hypot(s.x - this.x, s.y - this.y);
+            if(sDist < s.radius) {
+                let sdx = s.x - this.x;
+                let sdy = s.y - this.y;
+                this.x += (sdx / sDist) * 2.5; 
+                this.y += (sdy / sDist) * 2.5;
+            }
+        });
+
         if(this.frozenTimer > 0) {
             this.frozenTimer--;
             if(this.flash > 0) this.flash--;
@@ -186,17 +195,6 @@ class Enemy{
         let dx = player.x - this.x;
         let dy = player.y - this.y;
         let dist = Math.hypot(dx,dy);
-
-        // Apply Gravity Singularity pull if nearby
-        singularities.forEach(s => {
-            let sDist = Math.hypot(s.x - this.x, s.y - this.y);
-            if(sDist < s.radius) {
-                let sdx = s.x - this.x;
-                let sdy = s.y - this.y;
-                this.x += (sdx / sDist) * 3;
-                this.y += (sdy / sDist) * 3;
-            }
-        });
 
         this.x += dx/dist * this.speed;
         this.y += dy/dist * this.speed;
@@ -214,7 +212,7 @@ class Enemy{
 
     draw(){
         if(this.frozenTimer > 0) {
-            ctx.fillStyle = "#a6f2ff"; // Ice color
+            ctx.fillStyle = "#a6f2ff"; 
         } else {
             ctx.fillStyle = this.flash > 0 ? "white" : this.color;
         }
@@ -223,21 +221,18 @@ class Enemy{
         ctx.arc(this.x,this.y,this.r,0,Math.PI*2);
         ctx.fill();
 
-        // Ice overlay border
         if(this.frozenTimer > 0) {
             ctx.strokeStyle = "#00d2ff";
             ctx.lineWidth = 3;
             ctx.stroke();
         }
 
-        // eyes
         ctx.fillStyle = "black";
         ctx.beginPath();
         ctx.arc(this.x-6,this.y-5,3,0,Math.PI*2);
         ctx.arc(this.x+6,this.y-5,3,0,Math.PI*2);
         ctx.fill();
 
-        // mouth
         ctx.strokeStyle = "black";
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -419,21 +414,19 @@ class DamageText{
     }
 }
 
-// Visual indicator for lightning arcs
 class LightningArc {
     constructor(x1, y1, x2, y2) {
         this.x1 = x1; this.y1 = y1;
         this.x2 = x2; this.y2 = y2;
-        this.life = 10;
+        this.life = 8;
     }
     draw() {
-        ctx.strokeStyle = "#00ffff";
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(0, 255, 255, 0.7)";
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
         ctx.moveTo(this.x1, this.y1);
-        // Create a jagged look mid-point
-        let midX = (this.x1 + this.x2) / 2 + (Math.random() - 0.5) * 15;
-        let midY = (this.y1 + this.y2) / 2 + (Math.random() - 0.5) * 15;
+        let midX = (this.x1 + this.x2) / 2 + (Math.random() - 0.5) * 12;
+        let midY = (this.y1 + this.y2) / 2 + (Math.random() - 0.5) * 12;
         ctx.lineTo(midX, midY);
         ctx.lineTo(this.x2, this.y2);
         ctx.stroke();
@@ -443,10 +436,9 @@ class LightningArc {
 let arcs = [];
 
 function damageEnemy(enemy,damage,dx,dy,sourceType){
-    // Frost Nova shatter mechanic
     if(enemy.frozenTimer > 0 && sourceType !== "darkEnergy") {
-        if(Math.random() < 0.25) { // 25% chance to shatter
-            damage *= 2.5;
+        if(Math.random() < 0.20) { 
+            damage *= 1.8;
             damageTexts.push(new DamageText(enemy.x, enemy.y - 40, "SHATTER!", "#00e5ff"));
         }
     }
@@ -459,19 +451,9 @@ function damageEnemy(enemy,damage,dx,dy,sourceType){
         enemy.y += dy * 6;
     }
 
-    // Vampiric Essence (Life Steal Chance on Hit)
-    if(abilities.vampiric && Math.random() < abilities.vampiric.chance) {
-        let healAmt = Math.min(2, 100 - player.hp);
-        if(healAmt > 0) {
-            player.hp += healAmt;
-            damageTexts.push(new DamageText(player.x, player.y - 25, "+" + Math.floor(healAmt) + " HP", "#4eff47"));
-        }
-    }
-
-    // Chain Lightning Hook
     if(sourceType === "bullet" && abilities.chainLightning && !enemy.hasChained) {
-        enemy.hasChained = true; // prevent infinite loop loops
-        triggerChainLightning(enemy, damage * 0.6, abilities.chainLightning.bounces);
+        enemy.hasChained = true; 
+        triggerChainLightning(enemy, damage * 0.4, abilities.chainLightning.bounces);
     }
 
     let displayDamage = Math.floor(damage);
@@ -489,6 +471,19 @@ function damageEnemy(enemy,damage,dx,dy,sourceType){
             )
         );
     }
+
+    if (enemy.hp <= 0 && abilities.vampiric) {
+        player.vampireKills++;
+        
+        if (player.vampireKills >= abilities.vampiric.killsNeeded) {
+            player.vampireKills = 0; 
+            let healAmt = Math.min(1, 100 - player.hp);
+            if (healAmt > 0) {
+                player.hp += healAmt;
+                damageTexts.push(new DamageText(player.x, player.y - 25, "+1 HP", "#4eff47"));
+            }
+        }
+    }
 }
 
 function triggerChainLightning(startEnemy, chainDmg, maxBounces) {
@@ -497,7 +492,7 @@ function triggerChainLightning(startEnemy, chainDmg, maxBounces) {
 
     for(let b = 0; b < maxBounces; b++) {
         let closestNext = null;
-        let closestDist = 200; // bounce range limit
+        let closestDist = 160; 
 
         enemies.forEach(e => {
             if(!bouncedTargets.includes(e)) {
@@ -513,7 +508,7 @@ function triggerChainLightning(startEnemy, chainDmg, maxBounces) {
             arcs.push(new LightningArc(currentSource.x, currentSource.y, closestNext.x, closestNext.y));
             closestNext.hp -= chainDmg;
             closestNext.flash = 4;
-            damageTexts.push(new DamageText(closestNext.x, closestNext.y - 20, "-" + Math.floor(chainDmg), "#00ffff"));
+            damageTexts.push(new DamageText(closestNext.x, closestNext.y - 20, "-" + Math.max(1, Math.floor(chainDmg)), "#00ffff"));
             
             bouncedTargets.push(closestNext);
             currentSource = closestNext;
@@ -522,7 +517,6 @@ function triggerChainLightning(startEnemy, chainDmg, maxBounces) {
         }
     }
     
-    // Clean up temporary flag next frame loop
     enemies.forEach(e => e.hasChained = false);
 }
 
@@ -558,7 +552,6 @@ function nearestEnemy(x,y){
     return closest;
 }
 
-// Default shooting loop
 setInterval(()=>{
     if(paused) return;
 
@@ -696,25 +689,23 @@ setInterval(()=>{
     player.bullets.push(pizza);
 },2000);
 
-// FROST NOVA INTERVAL LOOP
 let frostNovaRadius = 0;
 let frostNovaActive = false;
 setInterval(() => {
     if(paused || !abilities.frostNova) return;
     frostNovaActive = true;
     frostNovaRadius = 0;
-}, 4500);
+}, 7000);
 
-// GRAVITY SINGULARITY INTERVAL LOOP
 setInterval(() => {
     if(paused || !abilities.singularity) return;
     singularities.push({
         x: mouse.x,
         y: mouse.y,
         radius: abilities.singularity.radius,
-        life: 180 // 3 seconds at 60fps
+        life: 120 
     });
-}, 6000);
+}, 8000);
 
 function update(){
     if(paused) return;
@@ -727,27 +718,27 @@ function update(){
     player.x = Math.max(player.r,Math.min(canvas.width-player.r,player.x));
     player.y = Math.max(player.r,Math.min(canvas.height-player.r,player.y));
 
-    // FROST NOVA WAVE EXPANSION UPDATE
     if(frostNovaActive && abilities.frostNova) {
-        frostNovaRadius += 8;
+        frostNovaRadius += 9;
         enemies.forEach(e => {
             let d = Math.hypot(e.x - player.x, e.y - player.y);
+            // Check if the wave hits the enemy
             if(Math.abs(d - frostNovaRadius) < 15 && e.frozenTimer <= 0) {
                 e.frozenTimer = abilities.frostNova.duration;
             }
         });
-        if(frostNovaRadius > canvas.width) {
+        
+        // FIXED/NERFED: Wave cuts off much sooner based on upgrade size, rather than whole screen immediately
+        if(frostNovaRadius > abilities.frostNova.maxRadius) {
             frostNovaActive = false;
         }
     }
 
-    // GRAVITY SINGULARITY LIFESPAN UPDATE
     singularities.forEach((s, idx) => {
         s.life--;
         if(s.life <= 0) singularities.splice(idx, 1);
     });
 
-    // DARK ENERGY (WITH SLOW DOWN)
     if(abilities.darkEnergy){
         enemies.forEach((e,ei)=>{
             let dist = Math.hypot(player.x-e.x,player.y-e.y);
@@ -806,7 +797,6 @@ function update(){
         }
     });
 
-    // Filter out dead enemies completely in one pass safely
     enemies = enemies.filter(e => e.hp > 0);
 
     damageTexts.forEach((d,i)=>{
@@ -834,11 +824,10 @@ function update(){
 function draw(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
 
-    // DRAW GRAVITY SINGULARITIES
     singularities.forEach(s => {
         let grad = ctx.createRadialGradient(s.x, s.y, 5, s.x, s.y, s.radius);
         grad.addColorStop(0, "rgba(0,0,0,1)");
-        grad.addColorStop(0.3, "rgba(50,10,90,0.8)");
+        grad.addColorStop(0.3, "rgba(50,10,90,0.7)");
         grad.addColorStop(1, "rgba(130,0,255,0)");
         ctx.fillStyle = grad;
         ctx.beginPath();
@@ -846,7 +835,6 @@ function draw(){
         ctx.fill();
     });
 
-    // DARK ENERGY VISUAL
     if(abilities.darkEnergy){
         let g = ctx.createRadialGradient(
             player.x,
@@ -866,22 +854,19 @@ function draw(){
         ctx.fill();
     }
 
-    // DRAW FROST NOVA WAVE EFFECT
     if(frostNovaActive && abilities.frostNova) {
-        ctx.strokeStyle = "rgba(130, 235, 255, 0.4)";
-        ctx.lineWidth = 6;
+        ctx.strokeStyle = "rgba(130, 235, 255, 0.3)";
+        ctx.lineWidth = 4;
         ctx.beginPath();
         ctx.arc(player.x, player.y, frostNovaRadius, 0, Math.PI*2);
         ctx.stroke();
     }
 
-    // PLAYER
     ctx.fillStyle = "#4de1ff";
     ctx.beginPath();
     ctx.arc(player.x,player.y,player.r,0,Math.PI*2);
     ctx.fill();
 
-    // gun
     ctx.strokeStyle = "white";
     ctx.lineWidth = 5;
     ctx.beginPath();
@@ -894,7 +879,6 @@ function draw(){
     enemies.forEach(e=>e.draw());
     damageTexts.forEach(d=>d.draw());
 
-    // Render & cleanup lightning arcs
     arcs.forEach((arc, index) => {
         arc.draw();
         if(arc.life <= 0) arcs.splice(index, 1);
@@ -999,29 +983,36 @@ function showUpgrades(){
         {
             name:"🧛 Vampiric Essence",
             effect:()=>{
-                if(!abilities.vampiric){ abilities.vampiric = { chance: 0.08 }; } 
-                else { abilities.vampiric.chance = Math.min(0.25, abilities.vampiric.chance + 0.05); }
+                if(!abilities.vampiric){ 
+                    abilities.vampiric = { killsNeeded: 8 }; 
+                } else { 
+                    abilities.vampiric.killsNeeded = Math.max(3, abilities.vampiric.killsNeeded - 2); 
+                } 
             }
         },
         {
             name:"🧊 Frost Nova",
             effect:()=>{
-                if(!abilities.frostNova){ abilities.frostNova = { duration: 120 }; } 
-                else { abilities.frostNova.duration += 60; }
+                // NERFED: First upgrade starts with a smaller maximum wave distance (240px radius instead of screen-wide)
+                if(!abilities.frostNova){ abilities.frostNova = { duration: 80, maxRadius: 240 }; } 
+                else { 
+                    abilities.frostNova.duration += 40; 
+                    abilities.frostNova.maxRadius += 160; // Subsequent upgrades increase the wave size
+                }
             }
         },
         {
             name:"⚡ Chain Lightning",
             effect:()=>{
-                if(!abilities.chainLightning){ abilities.chainLightning = { bounces: 2 }; } 
+                if(!abilities.chainLightning){ abilities.chainLightning = { bounces: 1 }; } 
                 else { abilities.chainLightning.bounces += 1; }
             }
         },
         {
             name:"🧲 Gravity Singularity",
             effect:()=>{
-                if(!abilities.singularity){ abilities.singularity = { radius: 150 }; } 
-                else { abilities.singularity.radius += 40; }
+                if(!abilities.singularity){ abilities.singularity = { radius: 110 }; } 
+                else { abilities.singularity.radius += 30; }
             }
         }
     ];
