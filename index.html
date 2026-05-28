@@ -106,6 +106,11 @@ const ctx = canvas.getContext("2d");
 canvas.width = innerWidth;
 canvas.height = innerHeight;
 
+window.addEventListener("resize", () => {
+    canvas.width = innerWidth;
+    canvas.height = innerHeight;
+});
+
 const keys = {};
 const mouse = {x:0,y:0};
 
@@ -134,6 +139,7 @@ const player = {
     hp:100,
     damage:15,
     fireRate:320,
+    lastShot:0,
     bullets:[],
     level:1,
     vampireKills: 0 
@@ -163,19 +169,25 @@ let paused = false;
 
 class Enemy{
     constructor(){
-        this.x = Math.random()*canvas.width;
-        this.y = Math.random()*canvas.height;
+        // Spawn enemies off-screen instead of randomly inside the screen boundaries
+        const angle = Math.random() * Math.PI * 2;
+        const spawnDist = Math.max(canvas.width, canvas.height) * 0.6;
+        this.x = player.x + Math.cos(angle) * spawnDist;
+        this.y = player.y + Math.sin(angle) * spawnDist;
         this.r = 20;
-        this.baseSpeed = 1 + round*0.15; 
+        
+        // Logarithmic formula prevents enemies from moving ridiculously fast at high rounds
+        this.baseSpeed = 1.2 + Math.log(round + 1) * 0.6; 
+        if (this.baseSpeed > 3.8) this.baseSpeed = 3.8; // Safe hard cap
+        
         this.speed = this.baseSpeed;
-        this.hp = 35 + round*8;
+        this.hp = 35 + round * 12;
         this.color = `hsl(${Math.random()*360},80%,60%)`;
         this.flash = 0;
         this.frozenTimer = 0;
     }
 
     update(){
-        // FIXED: Singularity pull happens BEFORE the freeze return check so frozen enemies still get sucked in
         singularities.forEach(s => {
             let sDist = Math.hypot(s.x - this.x, s.y - this.y);
             if(sDist < s.radius) {
@@ -196,8 +208,10 @@ class Enemy{
         let dy = player.y - this.y;
         let dist = Math.hypot(dx,dy);
 
-        this.x += dx/dist * this.speed;
-        this.y += dy/dist * this.speed;
+        if(dist > 0) {
+            this.x += dx/dist * this.speed;
+            this.y += dy/dist * this.speed;
+        }
 
         if(dist < this.r + player.r){
             player.hp -= 0.15;
@@ -522,7 +536,7 @@ function triggerChainLightning(startEnemy, chainDmg, maxBounces) {
 
 function spawnWave(){
     enemies = [];
-    let amount = 5 + round*3;
+    let amount = 5 + round * 3;
 
     for(let i=0;i<amount;i++){
         enemies.push(new Enemy());
@@ -552,25 +566,7 @@ function nearestEnemy(x,y){
     return closest;
 }
 
-setInterval(()=>{
-    if(paused) return;
-
-    let angle = Math.atan2(mouse.y-player.y,mouse.x-player.x);
-    player.bullets.push(
-        new Projectile(
-            player.x,
-            player.y,
-            Math.cos(angle)*9,
-            Math.sin(angle)*9,
-            5,
-            "yellow",
-            player.damage,
-            "bullet"
-        )
-    );
-},player.fireRate);
-
-// SPEED ARROWS
+// SPEED ARROWS LOOP
 setInterval(()=>{
     if(paused || !abilities.speedArrows) return;
 
@@ -600,7 +596,7 @@ setInterval(()=>{
     }
 },500);
 
-// BUBBLES
+// BUBBLES LOOP
 setInterval(()=>{
     if(paused || !abilities.bubbles) return;
 
@@ -620,7 +616,7 @@ setInterval(()=>{
     }
 },1200);
 
-// FEATHERS
+// FEATHERS LOOP
 setInterval(()=>{
     if(paused || !abilities.feathers) return;
 
@@ -646,7 +642,7 @@ setInterval(()=>{
     }
 },700);
 
-// BANANAS
+// BANANAS LOOP
 setInterval(()=>{
     if(paused || !abilities.bananas) return;
 
@@ -669,7 +665,7 @@ setInterval(()=>{
     player.bullets.push(banana);
 },1400);
 
-// PIZZA
+// PIZZA LOOP
 setInterval(()=>{
     if(paused || !abilities.pizza) return;
 
@@ -707,13 +703,41 @@ setInterval(() => {
     });
 }, 8000);
 
-function update(){
+function update(currentTime){
     if(paused) return;
 
-    if(keys["w"]) player.y -= player.speed;
-    if(keys["s"]) player.y += player.speed;
-    if(keys["a"]) player.x -= player.speed;
-    if(keys["d"]) player.x += player.speed;
+    // Fixed: Handle Dynamic Yellow Gun Shooting Inside Main Loop
+    if(currentTime - player.lastShot >= player.fireRate){
+        let angle = Math.atan2(mouse.y-player.y,mouse.x-player.x);
+        player.bullets.push(
+            new Projectile(
+                player.x,
+                player.y,
+                Math.cos(angle)*9,
+                Math.sin(angle)*9,
+                5,
+                "yellow",
+                player.damage, // Correctly grabs dynamic upgraded damage!
+                "bullet"
+            )
+        );
+        player.lastShot = currentTime;
+    }
+
+    // Normalized Movement Vector (Prevents zooming around diagonally)
+    let moveX = 0;
+    let moveY = 0;
+
+    if(keys["w"]) moveY -= 1;
+    if(keys["s"]) moveY += 1;
+    if(keys["a"]) moveX -= 1;
+    if(keys["d"]) moveX += 1;
+
+    if (moveX !== 0 || moveY !== 0) {
+        let length = Math.hypot(moveX, moveY);
+        player.x += (moveX / length) * player.speed;
+        player.y += (moveY / length) * player.speed;
+    }
 
     player.x = Math.max(player.r,Math.min(canvas.width-player.r,player.x));
     player.y = Math.max(player.r,Math.min(canvas.height-player.r,player.y));
@@ -722,13 +746,11 @@ function update(){
         frostNovaRadius += 9;
         enemies.forEach(e => {
             let d = Math.hypot(e.x - player.x, e.y - player.y);
-            // Check if the wave hits the enemy
             if(Math.abs(d - frostNovaRadius) < 15 && e.frozenTimer <= 0) {
                 e.frozenTimer = abilities.frostNova.duration;
             }
         });
         
-        // FIXED/NERFED: Wave cuts off much sooner based on upgrade size, rather than whole screen immediately
         if(frostNovaRadius > abilities.frostNova.maxRadius) {
             frostNovaActive = false;
         }
@@ -772,8 +794,10 @@ function update(){
                 let dy = player.y - b.y;
                 let dist = Math.hypot(dx,dy);
 
-                b.dx += dx/dist * 0.3;
-                b.dy += dy/dist * 0.3;
+                if(dist > 0) {
+                    b.dx += dx/dist * 0.3;
+                    b.dy += dy/dist * 0.3;
+                }
             }
         }
 
@@ -885,13 +909,13 @@ function draw(){
     });
 }
 
-function loop(){
-    update();
+function loop(timestamp){
+    update(timestamp);
     draw();
     requestAnimationFrame(loop);
 }
 
-loop();
+requestAnimationFrame(loop);
 
 function updateUI(){
     document.getElementById("hp").textContent = Math.max(0, Math.floor(player.hp));
@@ -913,15 +937,15 @@ function showUpgrades(){
     const upgrades = [
         {
             name:"⚡ Faster Shooting",
-            effect:()=>{ player.fireRate = Math.max(100,player.fireRate-40); }
+            effect:()=>{ player.fireRate = Math.max(70, player.fireRate - 45); }
         },
         {
             name:"💥 More Damage",
-            effect:()=>{ player.damage += 6; }
+            effect:()=>{ player.damage += 8; }
         },
         {
             name:"👟 More Speed",
-            effect:()=>{ player.speed += 0.6; }
+            effect:()=>{ player.speed += 0.8; }
         },
         {
             name:"❤️ Heal",
@@ -993,11 +1017,10 @@ function showUpgrades(){
         {
             name:"🧊 Frost Nova",
             effect:()=>{
-                // NERFED: First upgrade starts with a smaller maximum wave distance (240px radius instead of screen-wide)
                 if(!abilities.frostNova){ abilities.frostNova = { duration: 80, maxRadius: 240 }; } 
                 else { 
                     abilities.frostNova.duration += 40; 
-                    abilities.frostNova.maxRadius += 160; // Subsequent upgrades increase the wave size
+                    abilities.frostNova.maxRadius += 160; 
                 }
             }
         },
